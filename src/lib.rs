@@ -53,6 +53,9 @@
 
 mod u128_ext;
 
+#[cfg(test)]
+extern crate std;
+
 use core::hint;
 use core::mem::{self, MaybeUninit};
 use core::str;
@@ -463,4 +466,74 @@ fn div_rem_1e16(n: u128) -> (u128, u64) {
     let quot = u128_ext::mulhi(n, M_HIGH) >> SH_POST;
     let rem = n - quot * D;
     (quot, rem as u64)
+}
+
+#[cfg(test)]
+mod u128_split_bridge_tests {
+    use super::{div_rem_1e16, Buffer};
+    use std::string::ToString;
+
+    const D: u128 = 1_0000_0000_0000_0000;
+    const SEED: u128 = 0x243f_6a88_85a3_08d3_1319_8a2e_0370_7344;
+    const CORPUS_LEN: usize = 4096;
+
+    fn check(n: u128) {
+        let (quot_1e16, mod_1e16) = div_rem_1e16(n);
+        assert_eq!((quot_1e16, mod_1e16), (n / D, (n % D) as u64));
+
+        let (quot_1e32, mod_1e16_high) = div_rem_1e16(quot_1e16);
+        assert_eq!(
+            (quot_1e32, mod_1e16_high),
+            (quot_1e16 / D, (quot_1e16 % D) as u64)
+        );
+        assert!(quot_1e32 < 10_000_000);
+        assert_eq!(
+            n,
+            quot_1e32 * D * D + u128::from(mod_1e16_high) * D + u128::from(mod_1e16)
+        );
+
+        let mut buffer = Buffer::new();
+        assert_eq!(buffer.format(n), n.to_string());
+    }
+
+    #[test]
+    fn u128_split_bridge_matches_production() {
+        let d_squared = D * D;
+        let high = u128::MAX / d_squared;
+        let boundaries = [
+            0,
+            1,
+            9,
+            10,
+            99,
+            100,
+            999,
+            1000,
+            D - 1,
+            D,
+            D + 1,
+            d_squared - 1,
+            d_squared,
+            d_squared + 1,
+            d_squared + D - 1,
+            d_squared + D,
+            d_squared + D + 1,
+            high * d_squared - 1,
+            high * d_squared,
+            u128::MAX - 1,
+            u128::MAX,
+        ];
+
+        for n in boundaries {
+            check(n);
+        }
+
+        let mut state = SEED;
+        for _ in 0..CORPUS_LEN {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            check(state);
+        }
+    }
 }
